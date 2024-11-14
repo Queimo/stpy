@@ -6,3 +6,16 @@ Home-page:
 Author: Mojmir Mutny
 Author-email: mojmir.mutny@inf.ethz.ch
 License: custom 
+Requires-Dist: numpy
+Requires-Dist: scipy>=1.6
+Requires-Dist: matplotlib
+Requires-Dist: scikit-learn
+Requires-Dist: tensorflow
+Requires-Dist: cvxpy
+Requires-Dist: torch
+Requires-Dist: pymanopt
+Requires-Dist: pandas
+Requires-Dist: mosek
+Requires-Dist: quadprog
+Requires-Dist: cvxpylayers
+Requires-Dist: autograd_minimize

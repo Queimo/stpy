@@ -2,9 +2,9 @@ from setuptools import setup
 
 packages = [
     'numpy',
-    'scipy',
+    'scipy>=1.6',
     'matplotlib',
-    'sklearn',
+    'scikit-learn',
     'tensorflow',
     'cvxpy',
     'torch',
@@ -13,7 +13,6 @@ packages = [
     'mosek',
     'quadprog',
     'cvxpylayers',
-    'functorch',
     'autograd_minimize'
 ]
 #

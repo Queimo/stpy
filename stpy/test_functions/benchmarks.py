@@ -474,6 +474,7 @@ class Simple1DFunction(BenchmarkFunction):
 	def __init__(self, **kwargs):
 		super().__init__()
 		self.d = kwargs['d']
+		self.s = kwargs['s']
 
 	def eval_noiseless(self, X):
 		super().eval_noiseless(X)

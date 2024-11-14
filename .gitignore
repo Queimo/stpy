@@ -4,3 +4,7 @@ sensepy/__pycache__
 *.txt
 *.png
 *.pdf
+*.pkl
+*.xlsx
+*.xls
+*.parquet

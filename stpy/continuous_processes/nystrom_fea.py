@@ -109,6 +109,7 @@ class NystromFeatures(Embedding):
 		'''
 		self.x = x
 		self.y = y
+		assert torch.is_tensor(x)
 		self.d = x.size()[1]
 		self.N = x.size()[0]
 		assert (self.ms <= self.N)

@@ -5,7 +5,7 @@ import scipy as scipy
 import torch
 from cvxpylayers.torch import CvxpyLayer
 #from functorch import hessian
-import functorch
+# import functorch
 from pymanopt.manifolds import Euclidean, Stiefel, PSDFixedRank
 from torch.autograd import grad
 from torchmin import minimize as minimize_torch
@@ -410,6 +410,8 @@ class GaussianProcess(Estimator):
 
 		if self.loss == "squared":
 			ymean = torch.mm(K_star, self.A)
+		elif self.loss == "unif":
+			ymean = torch.mm(K_star, self.A)
 		elif self.loss == "huber":
 			ymean = self._huber_fit(K_star)
 		else:
@@ -524,7 +526,8 @@ class GaussianProcess(Estimator):
 		loglikelihood = lambda beta: torch.sum(torch.log(torch.exp( ((L@beta-self.y.view(-1))**2)/(2*self.s**2) + np.log(con) ) + 1 ) ) \
 										  + self.lam * beta.T  @ beta
 
-		H = hessian(loglikelihood)(solution)
+		# H = hessian(loglikelihood)(solution)
+		H = torch.autograd.functional.hessian(loglikelihood, solution)
 		logdet = - 0.5* torch.slogdet(H)[1] * weight
 		logprob = -0.5* loglikelihood(solution) + logdet
 		logprob = -logprob
@@ -619,8 +622,12 @@ class GaussianProcess(Estimator):
 			#v = lambda alpha : torch.sum(torch.exp( ((K_tch@alpha-self.y.view(-1))**2)/(2*self.s**2) + np.log(con) ))
 			solution.data = alpha.reshape(-1).data
 			self.warm_start_solution.data = solution.data
-			H = hessian(loglikelihood)(solution)
-
+			H = torch.autograd.functional.hessian(loglikelihood, solution)
+			# H = hessian(loglikelihood)(solution)
+		else:
+			#TODO: implement other loss functions
+			raise AssertionError("Loss function not implemented.")
+  
 		logdet = - 0.5* torch.slogdet(H)[1] * weight
 		logprob = -0.5* loglikelihood(solution) + logdet
 		logprob = -logprob
