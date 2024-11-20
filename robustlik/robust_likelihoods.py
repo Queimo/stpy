@@ -23,7 +23,9 @@ import pickle
 from PIL import Image
 
 def generate_data(F, d, eps=lambda X: 0, a=-1, b=1, num_points=100):
-    X = interval(num_points, d=2)
+    X = interval_torch(num_points, d, L_infinity_ball=1)
+    #scale X to [a,b] interval, caruful with this X is in [-1,1]
+    X =  X * (b-a)/2 + (a+b)/2
     Y = F(X) + eps(X)
     return X, Y
 
@@ -74,17 +76,34 @@ def student_t_loss(x,y,student_t_model):
     nll = nll.mean()
     return nll
 
-class ShallowModel(Sequential):
-    def __init__(self, input_dim, emb_dim ,output_dim, kernel):
-        super(ShallowModel, self).__init__()
+class StudentTLoss(torch.nn.MSELoss):
+    def __init__(self):
+        super(StudentTLoss, self).__init__()
+    
+    def forward(self, input, target):
+        # Get predictions from the model
+        #check for np.array
+        if isinstance(input, np.ndarray):
+            input = torch.tensor(input, dtype=torch.float64)
+        mu, v, alpha = torch.chunk(input, 3, dim=-1)
+        y = target.double()
+        nll = torch.lgamma(v/2) + torch.log(torch.sqrt(torch.pi*v*alpha)) - torch.lgamma((v+1)/2) + ((v+1)/2)*torch.log((1 + (y-mu)**2/(v*alpha)))
+        nll = nll.mean()
+        return nll
         
-        self.embedding = NystromFeatures(kernel, m=emb_dim, approx="nothing")
+
+class ShallowModel(Sequential):
+    def __init__(self, input_dim, emb_dim ,output_dim, gamma=0.5, kappa=6.6, d=1):
+        super(ShallowModel, self).__init__()
+        self.kernel = KernelFunction(kernel_name="squared_exponential", gamma=gamma, kappa=kappa, d=d)
+        self.embedding = NystromFeatures(self.kernel, m=emb_dim, approx="nothing")
         self.emb_fit = False
         m = self.embedding.get_m()
         self.dense = Linear(m, output_dim, bias=False).double()
     
     def phi(self, x):
         if not self.emb_fit:
+            
             # careful: only fit on first batch
             self.embedding.fit_gp(x,None, eps=0.1)
             self.emb_fit = True

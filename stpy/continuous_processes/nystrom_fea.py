@@ -112,7 +112,7 @@ class NystromFeatures(Embedding):
 		assert torch.is_tensor(x)
 		self.d = x.size()[1]
 		self.N = x.size()[0]
-		assert (self.ms <= self.N)
+		assert (self.ms <= self.N), f"ms:{self.ms} N:{self.N}"
 		self.linear_kernel = KernelFunction(kernel_name="linear").linear_kernel
 		if self.approx == "svd":
 			self.xs = x

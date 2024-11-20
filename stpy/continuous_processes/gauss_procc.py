@@ -9,6 +9,8 @@ from cvxpylayers.torch import CvxpyLayer
 from pymanopt.manifolds import Euclidean, Stiefel, PSDFixedRank
 from torch.autograd import grad
 from torchmin import minimize as minimize_torch
+from torchmin import Minimizer
+import tqdm
 
 import stpy.helpers.helper as helper
 from stpy.estimator import Estimator
@@ -18,7 +20,7 @@ from stpy.kernels import KernelFunction
 class GaussianProcess(Estimator):
 
 	def __init__(self, gamma=1, s=0.001, kappa=1., kernel_name="squared_exponential", diameter=1.0,
-				 groups=None, bounds=None, nu=1.5, kernel=None, d=1, power=2, lam=1., loss = 'squared', huber_delta = 1.35,
+				 groups=None, bounds=None, nu=1.5, kernel=None, d=1, power=2, lam=0.001, loss = 'squared', huber_delta = 1.35,
 				 hyper = 'classical', B = 1., svr_eps = 0.1):
 		"""
 
@@ -309,6 +311,130 @@ class GaussianProcess(Estimator):
 		else:
 			return alpha.view(-1,1)
 
+	# def _studentT_fit_adam(self, K_star, newK = None):
+
+	# 	def student_t_loss(x,y,student_t_model):
+	# 		output = student_t_model(x)
+	# 		mu, v, alpha = torch.chunk(output, 3, dim=-1)
+	# 		y = y.double()
+	# 		nll = torch.lgamma(v/2) + torch.log(torch.sqrt(torch.pi*v*alpha)) - torch.lgamma((v+1)/2) + ((v+1)/2)*torch.log((1 + (y-mu)**2/(v*alpha)))
+	# 		nll = nll.sum()
+	# 		return nll
+
+	# 	#set_postfix loss print
+	# 	optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+	# 	pbar = tqdm.tqdm(range(1000))
+	# 	for i in pbar:
+	# 		optimizer.zero_grad()
+	# 		loss = student_t_loss(X_t, Y_t, model)
+	# 		loss.backward()
+	# 		optimizer.step()
+	# 		pbar.set_postfix(loss=f'{loss.item():.4f}')
+	def _studentT_fit_torch(self, K_star, newK = None):
+		
+		def student_t_loss(K, y, model):
+			output = model(K)
+			mu, v, alpha = torch.chunk(output, 3, dim=-1)
+			y = y.double()
+			nll = torch.lgamma(v/2) + torch.log(torch.sqrt(torch.pi*v*alpha)) - torch.lgamma((v+1)/2) + ((v+1)/2)*torch.log((1 + (y-mu)**2/(v*alpha)))
+			nll = nll.sum()
+			return nll
+
+		self.jitter = 1e-4
+		if newK is None:
+			K = self.kernel(self.x, self.x) + self.jitter * torch.eye(self.n, dtype=torch.float64)
+		else:
+			K = newK
+
+		class StudModel(torch.nn.Module):
+			def __init__(self, input_dim, output_dim):
+				super(StudModel, self).__init__()
+				self.linear_model = torch.nn.Linear(input_dim, output_dim, bias=False).double()
+
+			def forward(self, x):
+				output = self.linear_model(x)
+				mu, v, alpha = torch.chunk(output, 3, dim=-1)
+				# transform v and alpha to be positive
+				v = torch.nn.functional.softplus(v) + 1	+ 1e-3
+				alpha = torch.nn.functional.softplus(alpha) + 1e-3
+				return torch.cat([mu, v, alpha], dim=-1)	
+
+		model = StudModel(self.n, 3)
+   
+		optimizer = Minimizer(model.parameters(), method="l-bfgs")
+
+		def closure():
+			optimizer.zero_grad()
+			loss = student_t_loss(K, self.y, model)
+			loss = loss + self.lam * torch.sum(model.linear_model.weight**2)
+			return loss
+
+
+		loss = optimizer.step(closure)
+  
+		#detach all tensors
+		for param in model.parameters():
+			param.detach()
+		
+  
+		# if loss is nan
+		if torch.isnan(loss):
+			print("WARNING: Loss is nan")
+
+		if K_star is not None:	
+			mu_v_alpha = model(K_star)
+			return mu_v_alpha.detach()
+		else:
+			return next(model.parameters()).T # (n,3)
+				
+
+
+	def _2studentT_fit_torch(self, K_star, newK = None):
+		def student_t_loss(pred, y):
+			mu, logv, loga = torch.chunk(pred, 3, dim=-1)
+			v = torch.nn.functional.softplus(logv) + 1
+			a = torch.nn.functional.softplus(loga) 
+			nll = torch.lgamma(v/2) + torch.log(torch.sqrt(torch.pi*v*a)) - torch.lgamma((v+1)/2) + ((v+1)/2)*torch.log((1 + (y-mu)**2/(v*a)))
+			# nll = torch.functional.F.mse_loss(mu, y.view(-1).unsqueeze(-1)) 
+			nll = nll.sum() 
+			# print(nll)
+			return nll
+
+		self.jitter = 1e-4
+		self.jitter = 0 
+		if newK is None:
+			K = self.kernel(self.x, self.x) + self.jitter * torch.eye(self.n, dtype=torch.float64)
+		else:
+			K = newK.detach().clone()
+   
+		# L = torch.linalg.cholesky(K)	
+		
+		student_t = lambda beta: student_t_loss(K @ beta.view(-1,3) , self.y) + self.lam * torch.trace(beta.view(-1,3).T @ K @ beta.view(-1,3))
+  																							# (beta[:self.n] @ beta[:self.n] + \
+                                                                                      		# beta[self.n:2*self.n] @ beta[self.n:2*self.n] + \
+                                                                                            # beta[2*self.n:] @ beta[2*self.n:])
+		
+		# x_init = torch.nn.Linear(self.n, 3, bias=False).double().weight.detach().view(-1)
+  
+		x_init = torch.zeros(size = (self.n,3)).view(-1).double()
+		res = minimize_torch(student_t, x_init, method='l-bfgs', tol=1e-3, disp=0,
+							 options={'max_iter': 10**3, 'gtol': 1e-3})	
+  
+		# alpha_mu = torch.linalg.solve(L,res.x[:self.n])	
+		# alpha_v = torch.linalg.solve(L,res.x[self.n:2*self.n])
+		# alpha_alpha = torch.linalg.solve(L,res.x[2*self.n:])
+		alpha = res.x.view(-1,3)
+  
+		if K_star is not None:	
+			res = K_star @ alpha
+			mu, v, a = torch.chunk(res, 3, dim=-1)
+			v = torch.nn.functional.softplus(v) + 1
+			a = torch.nn.functional.softplus(a)
+			return torch.cat([mu, v, a], dim=-1)
+		else:
+			return alpha
+
+
 	def mean_std(self, xtest, full=False, reuse=False):
 		if xtest.size()[0]<self.max_size:
 			return self.mean_std_sub(xtest,full=full, reuse=reuse)
@@ -387,6 +513,8 @@ class GaussianProcess(Estimator):
 				ymean = self._svr_fit(K_star)
 			elif self.loss == "unif"  or self.loss == "unif_new":
 				ymean = self._unif_fit_torch(K_star)
+			elif self.loss == "studentT":
+				ymean = self._studentT_fit_torch(K_star)[:,0]
 			else:
 				raise AssertionError("Loss function not implemented.")
 
@@ -416,6 +544,8 @@ class GaussianProcess(Estimator):
 			ymean = torch.mm(K_star, self.A)
 		elif self.loss == "huber":
 			ymean = self._huber_fit(K_star)
+		elif self.loss == "studentT":
+			ymean = self._studentT_fit_torch(K_star)[:,0]
 		else:
 			raise AssertionError("Loss function not implemented.")
 
@@ -626,15 +756,45 @@ class GaussianProcess(Estimator):
 			self.warm_start_solution.data = solution.data
 			H = torch.autograd.functional.hessian(loglikelihood, solution)
 			# H = hessian(loglikelihood)(solution)
+   
+		elif self.loss == "studentT":
+			def loglikelihood(alpha):
+				pred = K_tch@alpha
+				mu, logv, loga = torch.chunk(pred, 3, dim=-1)
+				v = torch.nn.functional.softplus(logv) + 1 + 1e-3
+				a = torch.nn.functional.softplus(loga) + 1e-3
+    
+				nll = torch.lgamma(v/2) + torch.log(torch.sqrt(torch.pi*v*a)) - torch.lgamma((v+1)/2) + ((v+1)/2)*torch.log((1 + (self.y-mu)**2/(v*a)))
+				nll = nll.mean()
+				return nll
+
+			alpha = self._studentT_fit_torch(None, newK=K_tch.detach())
+			solution = alpha
+			self.warm_start_solution = solution
+			H_full = torch.autograd.functional.hessian(loglikelihood, solution)
+			H = H_full
+			logdet_mu = torch.slogdet(H[:,0,:,0])[1]
+			logdet_v = torch.slogdet(H[:,1,:,1])[1]
+			logdet_a = torch.slogdet(H[:,2,:,2])[1]
+   
+			logdet = logdet_mu + logdet_v + logdet_a
+			logdet = -0.5 * logdet * weight
+			logprob = -0.5* loglikelihood(solution) + logdet
+			logprob = -logprob
+			# print(logprob)
+			return logprob
+   
 		else:
 			#TODO: implement other loss functions
 			raise AssertionError("Loss function not implemented.")
+
+  
   
 		logdet = - 0.5* torch.slogdet(H)[1] * weight
+
 		logprob = -0.5* loglikelihood(solution) + logdet
 		logprob = -logprob
 		return logprob
-
 
 
 	def _log_marginal_squared(self, kernel, X, weight):

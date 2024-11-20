@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
 
 
 def matlab_style_gauss2D(shape=(3, 3), sigma=0.5):
