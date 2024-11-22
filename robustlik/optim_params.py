@@ -17,7 +17,7 @@ n = 256
 d = 1
 eps = 0.01
 s = 1
-gamma = .1
+gamma = .2
 
 # Set random seed
 torch.manual_seed(1)
@@ -43,43 +43,9 @@ y2 = torch.vstack([y, ynew])
 # x2 = x
 # y2 = y
 
-# Initialize models
-GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5)
-GP_sqr_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d)
-GP_huber_uncorrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5)
-GP_sqr_uncorrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d)
 
-# gpytorch models
-gp = SingleTaskGP(
-    train_X=x2,
-    train_Y=y2,
-    input_transform=Normalize(d=d),
-    # outcome_transform=Standardize(m=1),
-)
-
-# Fit models
-GP_sqr_corrupted.fit_gp(x2, y2)
-GP_huber_uncorrupted.fit_gp(x, y)
-GP_sqr_uncorrupted.fit_gp(x, y)
-
-# Optimize models
-# GP_sqr_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=False, optimizer='pytorch-minimize', scale=1.)
-# GP_sqr_uncorrupted.optimize_params(type="bandwidth", restarts=5, verbose=False, optimizer='pytorch-minimize', scale=1.)
-# GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=False, optimizer='pytorch-minimize', scale=1., weight=1.)
-# GP_student_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=False, optimizer='pytorch-minimize', scale=1., weight=1.)
-# mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
-# fit_gpytorch_mll(mll)
-
-# Predictions
-mu_sqr_corrupted = GP_sqr_corrupted.mean(xtest)
-mu_sqr_uncorrupted = GP_sqr_uncorrupted.mean(xtest)
-mu_huber_uncorrupted = GP_huber_uncorrupted.mean(xtest)
-
-mu = gp.posterior(xtest).mean.detach().numpy()
-gp.likelihood.parameters()
-
-
-lamdas = np.logspace(-6, -2, 5)
+lamdas = [.005]
+# lamdas = np.logspace(-4, -2, 3)
 # lamdas = np.linspace(1, 101, 10)
 #increasing colors
 cmap = plt.get_cmap('viridis')
@@ -91,11 +57,11 @@ try:
         GP_student_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
         mu_student_corrupted = GP_student_corrupted.mean(xtest)
         
-        # GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5, lam=lam)
-        # GP_huber_corrupted.fit_gp(x2, y2)
-        # mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
+        GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5, lam=.05)
+        GP_huber_corrupted.fit_gp(x2, y2)
+        GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
+        mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
         
-        #if mean is too large, it will not be plotted
         if np.abs(mu_student_corrupted).max() > 10e6:
             plt.plot([], [], label=f'lam={lam:.4} --> nan', lw=1, color=colors[i])
         else:
@@ -103,7 +69,8 @@ try:
             print(GP_student_corrupted.kernel_object.get_param_refs()["0"])
             string = f'lam={lam:.4}\ngamma={gamma:.2}'
             plt.plot(xtest, mu_student_corrupted, label=string, lw=1, color=colors[i])
-            # plt.plot(xtest, mu_huber_corrupted, lw=1, color=colors[i], linestyle='--')
+            
+        plt.plot(xtest, mu_huber_corrupted, lw=1, color=colors[i], linestyle='--', label=f'huber')
 except KeyboardInterrupt:
     pass
 

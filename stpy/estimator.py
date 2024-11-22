@@ -12,6 +12,10 @@ from abc import ABC, abstractmethod
 from stpy.helpers import helper
 from stpy.optim.custom_optimizers import bisection
 
+import dask
+from dask.delayed import delayed
+
+
 class Estimator(ABC):
 
 	def fit(self):
@@ -38,6 +42,42 @@ class Estimator(ABC):
 		logprob = -0.5 * torch.mm(torch.t(self.y), alpha) + logdet
 		logprob = -logprob
 		return logprob
+
+	@staticmethod
+	def optimization_summary(objective_params, objective_values):
+		for i, (op, ov) in enumerate(zip(objective_params, objective_values)):
+			#f string magic for nice formatting
+			print(f'{i} Cost: {ov:.3f}, Params: {",".join([f"{p.item():2f}" for p in op])}')
+   
+		objective_values = np.nan_to_num(objective_values, nan=np.inf)
+		best_index = np.argmin(objective_values)
+		print(f'Best index: {best_index}')
+		return best_index
+
+	@staticmethod
+	def optimization_iter(rep, dims, dim, init_values, bounds, scale, verbose, maxiter, mingradnorm, cost):
+		"""
+		Perform a single optimization iteration as part of the class.
+		"""
+		print("Restart", rep)
+		if init_values[0] is None:
+			x_init = torch.randn(size=(dim, 1)).double().view(-1)**2 * scale
+		else:
+			x_init = init_values[0](dim)
+
+		if bounds[0] is None:
+			res = minimize_torch(cost, x_init, method='l-bfgs', tol=1e-10, disp=verbose + 1,
+								options={'max_iter': maxiter, 'gtol': mingradnorm})
+			return res.x, res.fun
+		else:
+			print("Constrained optimization with bounds", bounds[0])
+			res = minimize(cost, x_init.numpy(), backend='torch', method='L-BFGS-B',
+						bounds=bounds[0], precision='float64', tol=1e-8,
+						options={'ftol': 1e-10,
+									'gtol': mingradnorm, 'eps': 1e-08,
+									'maxfun': 15000, 'maxiter': maxiter,
+									'maxls': 20, 'disp': verbose + 1})
+			return torch.from_numpy(res.x), torch.from_numpy(res.fun)
 
 	def optimize_params_general(self, params={}, restarts=2,
 								optimizer="pymanopt", maxiter=1000,
@@ -139,7 +179,7 @@ class Estimator(ABC):
 			x_opt = [bisection(cost,a,b,100)]
 
 		elif optimizer == "pytorch-minimize":
-			var_names = []
+			# var_names = []
 			dims = [0,]
 			for key, dict_params in params.items():
 				for var_name, value in dict_params.items():
@@ -148,7 +188,7 @@ class Estimator(ABC):
 					manifolds.append(manifold)
 					bounds.append(bound)
 					init_values.append(init_value)
-					var_names.append(var_name)
+					# var_names.append(var_name)
 					dims.append(manifold.dim)
 
 			dims = np.cumsum(dims).astype(int)
@@ -177,6 +217,7 @@ class Estimator(ABC):
 			dim = dims[-1]
 			self.prepared_log_marginal = False
 			for rep in range(restarts):
+				print("Restart", rep)
 				#try:
 				if init_values[0] is None:
 					x_init = torch.randn(size=(dim, 1)).double().view(-1)**2 * scale
@@ -213,13 +254,87 @@ class Estimator(ABC):
 				with open(save_name, 'wb') as f:
 					pickle.dump(vals, f)
 
-
-			best_index = np.argmin(objective_values)
-
+			best_index = self.optimization_summary(objective_params, objective_values)
+				
 			counter = 0
 			for key, dict_params in params.items():
 				for var_name, value in dict_params.items():
 					x_opt.append(objective_params[best_index][dims[counter]:dims[counter+1]])
+					counter += 1
+
+
+		elif optimizer == "pytorch-minimize-dask":
+			
+			# var_names = []
+			dims = [0,]
+			for key, dict_params in params.items():
+				for var_name, value in dict_params.items():
+					init_value, manifold, bound = value
+
+					manifolds.append(manifold)
+					bounds.append(bound)
+					init_values.append(init_value)
+					# var_names.append(var_name)
+					dims.append(manifold.dim)
+
+			dims = np.cumsum(dims).astype(int)
+
+			def cost(x):
+				input_dict = self.kernel_object.params_dict
+				counter = 0
+				for key, dict_params in params.items():
+					for var_name, value in dict_params.items():
+						if key != "likelihood":
+							input_dict[key][var_name] = x[dims[counter]:dims[counter+1]]
+						else:
+							self.s = x[dims[counter]:dims[counter+1]]
+							counter += 1
+
+				if regularizer_func is not None:
+					f = self.log_marginal(self.kernel_object, input_dict, weight) + regularizer_func(x)
+				else:
+					f = self.log_marginal(self.kernel_object, input_dict, weight)
+				return f
+
+			dim = dims[-1]
+			self.prepared_log_marginal = False
+
+			# Create delayed tasks for each restart
+			tasks = [
+				delayed(self.optimization_iter)(
+					rep, dims, dim, init_values, bounds, scale, verbose, maxiter, mingradnorm, cost
+				)
+				for rep in range(restarts)
+			]
+
+			# Execute tasks in parallel
+			results = dask.compute(*tasks, scheduler='threads')
+
+			# Extract results
+			objective_params = [res[0] for res in results]
+			objective_values = [res[1] for res in results]
+
+			# Save models if required
+			if save:
+				vals = {
+					'params': objective_params,
+					'evidence': objective_values,
+					'repeats': restarts,
+					'dim': dims,
+					'param_names': params,
+				}
+				with open(save_name, 'wb') as f:
+					pickle.dump(vals, f)
+
+			# Find the best result
+			best_index = self.optimization_summary(objective_params, objective_values)
+
+			x_opt = []
+
+			counter = 0
+			for key, dict_params in params.items():
+				for var_name, _ in dict_params.items():
+					x_opt.append(objective_params[best_index][dims[counter]:dims[counter + 1]])
 					counter += 1
 
 		elif optimizer == "discrete":
