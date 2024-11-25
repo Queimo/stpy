@@ -59,7 +59,7 @@ try:
         
         GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5, lam=.05)
         GP_huber_corrupted.fit_gp(x2, y2)
-        GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
+        # GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
         mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
         
         if np.abs(mu_student_corrupted).max() > 10e6:

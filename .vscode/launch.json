@@ -5,9 +5,9 @@
       "name": "Python All code",
       "type": "debugpy",
       "request": "launch",
-      "program": "./robustlik/optim_params.py",
+      "program": "./robustlik/variance_pred.py",
       "console": "integratedTerminal",
-      "justMyCode": 0,
+      "justMyCode": false,
     }
   ]
 }

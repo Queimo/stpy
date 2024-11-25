@@ -49,7 +49,10 @@ class Estimator(ABC):
 			#f string magic for nice formatting
 			print(f'{i} Cost: {ov:.3f}, Params: {",".join([f"{p.item():2f}" for p in op])}')
    
+		#covert way too small values to inf
 		objective_values = np.nan_to_num(objective_values, nan=np.inf)
+		objective_values[objective_values < -1e20] = np.inf
+  
 		best_index = np.argmin(objective_values)
 		print(f'Best index: {best_index}')
 		return best_index
@@ -77,7 +80,7 @@ class Estimator(ABC):
 									'gtol': mingradnorm, 'eps': 1e-08,
 									'maxfun': 15000, 'maxiter': maxiter,
 									'maxls': 20, 'disp': verbose + 1})
-			return torch.from_numpy(res.x), torch.from_numpy(res.fun)
+			return torch.tensor(res.x), torch.tensor(res.fun)
 
 	def optimize_params_general(self, params={}, restarts=2,
 								optimizer="pymanopt", maxiter=1000,
@@ -238,8 +241,8 @@ class Estimator(ABC):
 											'maxfun': 15000, 'maxiter': maxiter,
 											'maxls': 20, 'disp' : verbose + 1})
 
-					objective_params.append(torch.from_numpy(res.x))
-					objective_values.append(torch.from_numpy(res.fun))
+					objective_params.append(torch.tensor(res.x))
+					objective_values.append(torch.tensor(res.fun))
 				#except Exception as e:
 				#	print(e)
 			# save models
