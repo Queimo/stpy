@@ -5,10 +5,10 @@ from stpy.helpers.helper import interval
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from botorch.models import SingleTaskGP
-from botorch.models.transforms import Normalize, Standardize
-from botorch.fit import fit_gpytorch_mll
-from gpytorch.mlls import ExactMarginalLogLikelihood
+# from botorch.models import SingleTaskGP
+# from botorch.models.transforms import Normalize, Standardize
+# from botorch.fit import fit_gpytorch_mll
+# from gpytorch.mlls import ExactMarginalLogLikelihood
 
 
 # Parameters
@@ -43,7 +43,7 @@ y2 = torch.vstack([y, ynew])
 # x2 = x
 # y2 = y
 
-k = KernelFunction(kernel_name="ard", d=d, groups = [[0,1]])
+k = KernelFunction(kernel_name="ard", d=d)
 # GP = GaussianProcess(kernel=k, d=2)
 
 lamdas = [.01]
@@ -52,31 +52,30 @@ lamdas = [.01]
 #increasing colors
 cmap = plt.get_cmap('viridis')
 colors = [cmap(i) for i in np.linspace(0, 1, len(lamdas))]
-try:
-    for i, lam in enumerate(lamdas):
-        GP_student_corrupted = GaussianProcess(gamma=gamma, kernel=k, d=d, loss='amini', lam=lam)
-        GP_student_corrupted.fit_gp(x2, y2)
-        # GP_student_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
-        mu_student_corrupted = GP_student_corrupted.mean(xtest)
-        print(mu_student_corrupted)
+for i, lam in enumerate(lamdas):
+    print("make GP")
+    GP_student_corrupted = GaussianProcess(gamma=gamma, kernel_name="ard", d=d, lam=lam)
+    print("fit_GP")
+    GP_student_corrupted.fit_gp(x2, y2)
+    # GP_student_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
+    mu_student_corrupted = GP_student_corrupted.mean(xtest)
+    print(mu_student_corrupted)
+    
+    # GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel=k, d=d, loss='huber', huber_delta=1.5, lam=.05)
+    # GP_huber_corrupted.fit_gp(x2, y2)
+    # GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
+    # mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
+    # print(mu_huber_corrupted)
+    
+    # if np.abs(mu_student_corrupted).max() > 10e6:
+    #     plt.plot([], [], label=f'lam={lam:.4} --> nan', lw=1, color=colors[i])
+    # else:
+    #     gamma = GP_student_corrupted.kernel_object.get_param_refs()["0"]['gamma'].item()
+    #     print(GP_student_corrupted.kernel_object.get_param_refs()["0"])
+    #     string = f'lam={lam:.4}\ngamma={gamma:.2}'
+    #     plt.plot(xtest, mu_student_corrupted, label=string, lw=1, color=colors[i])
         
-        GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel=k, d=d, loss='huber', huber_delta=1.5, lam=.05)
-        GP_huber_corrupted.fit_gp(x2, y2)
-        # GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
-        mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
-        print(mu_huber_corrupted)
-        
-        # if np.abs(mu_student_corrupted).max() > 10e6:
-        #     plt.plot([], [], label=f'lam={lam:.4} --> nan', lw=1, color=colors[i])
-        # else:
-        #     gamma = GP_student_corrupted.kernel_object.get_param_refs()["0"]['gamma'].item()
-        #     print(GP_student_corrupted.kernel_object.get_param_refs()["0"])
-        #     string = f'lam={lam:.4}\ngamma={gamma:.2}'
-        #     plt.plot(xtest, mu_student_corrupted, label=string, lw=1, color=colors[i])
-            
-        # plt.plot(xtest, mu_huber_corrupted, lw=1, color=colors[i], linestyle='--', label=f'huber')
-except KeyboardInterrupt:
-    pass
+    # plt.plot(xtest, mu_huber_corrupted, lw=1, color=colors[i], linestyle='--', label=f'huber')
 
 # Plotting
 plt.plot(xtest, GP_true.mean(xtest), 'b--', label="truth", lw=1)

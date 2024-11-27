@@ -52,15 +52,15 @@ cmap = plt.get_cmap('viridis')
 colors = [cmap(i) for i in np.linspace(0, 1, len(lamdas))]
 try:
     for i, lam in enumerate(lamdas):
-        GP_student_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='amini', lam=lam)
+        GP_student_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, lam=lam)
         GP_student_corrupted.fit_gp(x2, y2)
         GP_student_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
         mu_student_corrupted = GP_student_corrupted.mean(xtest)
         
-        GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5, lam=.05)
-        GP_huber_corrupted.fit_gp(x2, y2)
-        GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
-        mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
+        # GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5, lam=.05)
+        # GP_huber_corrupted.fit_gp(x2, y2)
+        # GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
+        # mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
         
         if np.abs(mu_student_corrupted).max() > 10e6:
             plt.plot([], [], label=f'lam={lam:.4} --> nan', lw=1, color=colors[i])
@@ -70,7 +70,7 @@ try:
             string = f'lam={lam:.4}\ngamma={gamma:.2}'
             plt.plot(xtest, mu_student_corrupted, label=string, lw=1, color=colors[i])
             
-        plt.plot(xtest, mu_huber_corrupted, lw=1, color=colors[i], linestyle='--', label=f'huber')
+        # plt.plot(xtest, mu_huber_corrupted, lw=1, color=colors[i], linestyle='--', label=f'huber')
 except KeyboardInterrupt:
     pass
 
