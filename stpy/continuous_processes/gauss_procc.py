@@ -17,7 +17,7 @@ import stpy.helpers.helper as helper
 from stpy.estimator import Estimator
 from stpy.kernels import KernelFunction
 
-from mtevi import EvidentialnetMarginalLikelihood, EvidenceRegularizer
+from stpy.continuous_processes.mtevi import EvidentialnetMarginalLikelihood, EvidenceRegularizer
 
 class StudModel(torch.nn.Module):
 	def __init__(self, input_dim, output_dim):
@@ -84,6 +84,9 @@ class GaussianProcess(Estimator):
 		self.prepared_log_marginal = False
 		self.warm_start_solution = None
 		self.max_size = 10000
+  
+		if self.loss == 'amini':
+			self.lam = 0.01
 
 		self.model = None
   

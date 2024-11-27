@@ -467,7 +467,10 @@ class Estimator(ABC):
 				  matheron_kernel=None, color = None, label = "", visualize_point = None):
 
 		if not bounds:
-			[mu, std] = self.mean_std(xtest)
+			if self.loss == "amini":
+				mu, std, _, _ = self.mean_std(xtest)
+			else:
+				[mu, std] = self.mean_std(xtest)
 			lcb = mu - sqrtbeta *std
 			ucb = mu + sqrtbeta *std
 		else:
