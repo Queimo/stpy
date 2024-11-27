@@ -47,7 +47,7 @@ class Estimator(ABC):
 	def optimization_summary(objective_params, objective_values):
 		for i, (op, ov) in enumerate(zip(objective_params, objective_values)):
 			#f string magic for nice formatting
-			print(f'{i} Cost: {ov:.3f}, Params: {",".join([f"{p.item():2f}" for p in op])}')
+			print(f'{i} Cost: {float(ov):.3f}, Params: {",".join([f"{p.item():2f}" for p in op])}')
    
 		#covert way too small values to inf
 		objective_values = np.nan_to_num(objective_values, nan=np.inf)

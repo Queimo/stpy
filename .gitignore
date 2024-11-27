@@ -8,3 +8,4 @@ sensepy/__pycache__
 *.xlsx
 *.xls
 *.parquet
+*.html

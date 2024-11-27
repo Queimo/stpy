@@ -15,6 +15,7 @@ eps = 0.01
 s = 1
 gamma = .1
 
+
 # Set random seed
 torch.manual_seed(1)
 
@@ -41,7 +42,9 @@ y2 = torch.vstack([y, ynew])
 
 #make 1 x 2 plot
 fig, axs = plt.subplots(1,1)
-GPt = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='amini', lam=0.01)
+loss = 'amini'
+
+GPt = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss=loss, lam=0.01)
 GPt.fit_gp(x2, y2)
 # GPt.optimize_params(type="bandwidth", restarts=6, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1., bounds=[(0.01, 10.)])
 
@@ -50,7 +53,7 @@ params = GPt.kernel_object.get_param_refs()
 gammas = np.linspace(0.01, .2, 50)
 
 
-m = GPt._log_marginal_map(GPt.kernel_object, params, 1., return_components=True)
+m = GPt._log_marginal_map(GPt.kernel_object, params, weight=1., return_components=True)
 
 #replace all fields with np.arrays like gammas
 for k, v in m.items():
@@ -66,7 +69,7 @@ m["gamma"] = gammas
 #         m_g = GPt._log_marginal_map(GPt.kernel_object, params, 1., return_components=True)
 #         for k, v in m_g.items():
 #             m[k][i] = v
-import threading
+
 from concurrent.futures import ThreadPoolExecutor
 
 import time
@@ -74,7 +77,7 @@ import time
 #tick tock
 start = time.time()
 
-pool = ThreadPoolExecutor(max_workers=50)
+pool = ThreadPoolExecutor(max_workers=1)
 
 def get_marginal(i, g):
     with torch.no_grad():
@@ -101,7 +104,12 @@ print(df)
 
 fig = px.line(df, x="gamma", y=df.columns, title="Marginal likelihood components")
 
-fig.to_html("./amini_marginallikelihood.html")
+#date today
+import datetime
+today_time = datetime.datetime.now()
+date_str = today_time.strftime("%Y-%m-%d-%H-%M-%S")
+
+fig.write_html(f"mll_over_gamma_{date_str}_{loss}_N={N}_gamma={gamma}.html")
 
 # mu_t, var_t, alea, epi = GPt.mean_std_sub(xtest)
 

@@ -44,7 +44,7 @@ y2 = torch.vstack([y, ynew])
 # y2 = y
 
 
-lamdas = [.005]
+lamdas = [.01]
 # lamdas = np.logspace(-4, -2, 3)
 # lamdas = np.linspace(1, 101, 10)
 #increasing colors
@@ -52,14 +52,14 @@ cmap = plt.get_cmap('viridis')
 colors = [cmap(i) for i in np.linspace(0, 1, len(lamdas))]
 try:
     for i, lam in enumerate(lamdas):
-        GP_student_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='studentT', lam=lam)
+        GP_student_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='amini', lam=lam)
         GP_student_corrupted.fit_gp(x2, y2)
         GP_student_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
         mu_student_corrupted = GP_student_corrupted.mean(xtest)
         
         GP_huber_corrupted = GaussianProcess(gamma=gamma, kernel_name="squared_exponential", d=d, loss='huber', huber_delta=1.5, lam=.05)
         GP_huber_corrupted.fit_gp(x2, y2)
-        # GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
+        GP_huber_corrupted.optimize_params(type="bandwidth", restarts=5, verbose=True, optimizer='pytorch-minimize', scale=1., weight=1.)
         mu_huber_corrupted = GP_huber_corrupted.mean(xtest)
         
         if np.abs(mu_student_corrupted).max() > 10e6:
