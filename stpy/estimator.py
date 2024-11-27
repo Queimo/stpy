@@ -229,7 +229,7 @@ class Estimator(ABC):
 
 				if bounds[0] is None:
 					res = minimize_torch(cost, x_init, method='l-bfgs', tol=1e-10, disp=verbose + 1,
-										 options={'max_iter': maxiter, 'gtol':mingradnorm})
+										 options={'max_iter': maxiter, 'gtol':mingradnorm, 'history_size': 10})
 					objective_params.append(res.x)
 					objective_values.append(res.fun)
 				else:

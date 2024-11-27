@@ -442,7 +442,7 @@ class GaussianProcess(Estimator):
 
 		y = self.y
 		alpha = torch.zeros(size = (self.n, n_params), requires_grad=True, dtype=torch.float64)
-		optimizer = Minimizer([alpha], method="l-bfgs")
+		optimizer = Minimizer([alpha], method="l-bfgs", history_size=10)
 
 		def closure():
 			optimizer.zero_grad()
