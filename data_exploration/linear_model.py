@@ -38,9 +38,10 @@ if __name__ == "__main__":
 
     # Define RidgeCV with cross-validation
     ridge_cv = RidgeCV(
-        alphas=np.linspace(100000, 300000.0, 20),  # Range of alpha values
+        alphas=np.linspace(1, 20, 20),  # Range of alpha values
         cv=5,  # 5-fold cross-validation
-        scoring="r2"  # Use R^2 as the scoring metric
+        scoring="r2",  # Use R^2 as the scoring metric
+          # Store the cross-validation values
     )
 
     # Fit the model
@@ -51,8 +52,13 @@ if __name__ == "__main__":
     print(f"Training R^2: {ridge_cv.score(X_train, y_train):.4f}")
     print(f"Validation R^2: {ridge_cv.score(X_val, y_val):.4f}")
     
+    import matplotlib.pyplot as plt
+    fig = plt.figure()
+    
     # Print top 20 coefficients
     print("Top coefficients:")
     top_idx = np.argsort(np.abs(ridge_cv.coef_))[::-1][:20]
     for idx in top_idx:
         print(f"Feature {idx}: {ridge_cv.coef_[idx]:.8f}")
+        plt.plot(idx, ridge_cv.coef_[idx], 'ro')
+        
