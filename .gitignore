@@ -9,3 +9,5 @@ sensepy/__pycache__
 *.xls
 *.parquet
 *.html
+.vscode/*
+.vscode/launch.json
