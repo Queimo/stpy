@@ -14,6 +14,7 @@ from stpy.optim.custom_optimizers import bisection
 
 import dask
 from dask.delayed import delayed
+import tqdm
 
 
 class Estimator(ABC):
@@ -226,12 +227,48 @@ class Estimator(ABC):
 					x_init = torch.randn(size=(dim, 1)).double().view(-1)**2 * scale
 				else:
 					x_init = init_values[0](dim)
+					print(x_init)
 
 				if bounds[0] is None:
-					res = minimize_torch(cost, x_init, method='l-bfgs', tol=1e-10, disp=verbose + 1,
-										 options={'max_iter': maxiter, 'gtol':mingradnorm, 'history_size': 10})
-					objective_params.append(res.x)
-					objective_values.append(res.fun)
+					
+					x_init.requires_grad = True
+					# optimizer = torch.optim.Adam([x_init], lr=0.01)
+					# #adam train loop
+					# pbar = tqdm.tqdm(range(maxiter))
+					# for i in pbar:
+					# 	# print(x_init)
+					# 	optimizer.zero_grad()
+					# 	loss = cost(x_init)
+					# 	loss.backward()
+					# 	optimizer.step()
+					# 	pbar.set_postfix({"loss": loss.item(), "x": x_init.detach().numpy()})
+					
+					optimizer = torch.optim.LBFGS([x_init],
+                    history_size=10, 
+                    max_iter=4, 
+                    line_search_fn="strong_wolfe")
+     
+					pbar = tqdm.tqdm(range(maxiter))
+					def closure():
+						optimizer.zero_grad()  # Clear gradients
+						loss = cost(x_init)
+						loss.backward()        # Compute gradients
+						return loss
+
+					for i in pbar:
+						# print(x_init)
+						optimizer.zero_grad()
+						loss = optimizer.step(closure)
+						pbar.set_postfix({"loss": loss.item(), "x": x_init.detach().numpy()})
+      
+					with torch.no_grad():
+						objective_params.append(x_init.detach())
+						objective_values.append(cost(x_init).detach().numpy())
+
+					# res = minimize_torch(cost, x_init, method='l-bfgs', tol=1e-10, disp=verbose + 1,
+					# 					 options={'max_iter': maxiter, 'gtol':mingradnorm, 'history_size': 10})
+					# objective_params.append(res.x)
+					# objective_values.append(res.fun)
 				else:
 					print ("Constrained optimization with bounds", bounds[0])
 					res = minimize(cost, x_init.numpy(), backend='torch', method='L-BFGS-B',

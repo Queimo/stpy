@@ -18,6 +18,8 @@ from stpy.estimator import Estimator
 from stpy.kernels import KernelFunction
 
 from stpy.continuous_processes.mtevi import EvidentialnetMarginalLikelihood, EvidenceRegularizer
+from sklearn.model_selection import KFold
+
 
 class StudModel(torch.nn.Module):
 	def __init__(self, input_dim, output_dim):
@@ -247,15 +249,19 @@ class GaussianProcess(Estimator):
 		K_star_star = self.kernel(xtest, xtest)
 		return (K_star, K_star_star)
 
-	def _huber_fit(self, K_star, newK = None):
-		alpha = cp.Variable(self.n)
+	def _huber_fit(self, K_star, newK = None, y=None):
 		self.jitter = 10e-5
 		if newK is None:
 			K = self.kernel(self.x, self.x) + self.jitter * torch.eye(self.n, dtype=torch.float64)
 		else:
 			K = newK.detach()
+
+		if y is None:
+			y = self.y
+   
+		alpha = cp.Variable(len(y))
 		K = cp.atoms.affine.wraps.psd_wrap(K)
-		objective = cp.Minimize(cp.sum(cp.huber((K @ alpha - self.y.view(-1).numpy())/self.s,M = self.huber_delta)) + self.lam * cp.quad_form(alpha, K))
+		objective = cp.Minimize(cp.sum(cp.huber((K @ alpha - y.view(-1).numpy())/self.s,M = self.huber_delta)) + self.lam * cp.quad_form(alpha, K))
 		prob = cp.Problem(objective)
 		prob.solve(solver = cp.MOSEK, enforce_dpp = False)
 
@@ -326,19 +332,22 @@ class GaussianProcess(Estimator):
 		else:
 			return alpha.view(-1, 1)
 	
-	def _huber_fit_torch(self, K_star, newK = None):
+	def _huber_fit_torch(self, K_star, newK = None, y=None):
 		self.jitter = 10e-5
 		if newK is None:
 			K = self.kernel(self.x, self.x) + self.jitter * torch.eye(self.n, dtype=torch.float64)
 		else:
 			K = newK
 
-		huber = lambda alpha: torch.nn.functional.huber_loss(K @ alpha / self.s, self.y.view(-1) / self.s,
+		if y is None:
+			y = self.y
+
+		huber = lambda alpha: torch.nn.functional.huber_loss(K @ alpha / self.s, y.view(-1) / self.s,
 															reduction='sum',
 															delta=self.huber_delta) + self.lam * alpha @ K @ alpha
   
 		#x_init = torch.linalg.solve(L.T@L+torch.eye(self.n).double()*self.s**2*self.lam, self.y)
-		x_init = torch.zeros(size = (self.n,1)).view(-1).double()
+		x_init = torch.zeros(size = (len(y),1)).view(-1).double()
 		res = minimize_torch(huber, x_init, method='l-bfgs', tol=1e-4, disp=0,
 							 options={'max_iter': 10**3, 'gtol': 1e-4})
 		
@@ -417,7 +426,7 @@ class GaussianProcess(Estimator):
 		else:
 			return next(model.parameters()).T # (n,3)
 		
-	def _amini_fit_torch(self, K_star, newK = None):
+	def _amini_fit_torch(self, K_star, newK = None, y=None):
     
 		objective = EvidentialnetMarginalLikelihood()
 		lapl_lik = EvidenceRegularizer(factor=0.005)
@@ -434,8 +443,7 @@ class GaussianProcess(Estimator):
 			mu, v, a, b = predict(K, alpha)
 			nll = objective(mu, v, a, b, y).sum()
 			laplace_loss = lapl_lik(mu, v, a, b, y).sum()
-			reg = self.lam * torch.trace(alpha.T @ K @ alpha)
-			return nll + laplace_loss + reg
+			return nll + laplace_loss
 
 		self.jitter = 1e-4
 		if newK is None:
@@ -443,13 +451,17 @@ class GaussianProcess(Estimator):
 		else:
 			K = newK
 
-		y = self.y
-		alpha = torch.zeros(size = (self.n, n_params), requires_grad=True, dtype=torch.float64)
+		if y is None:
+			y = self.y
+		
+		alpha = torch.zeros(size = (len(y), n_params), requires_grad=True, dtype=torch.float64)
 		optimizer = Minimizer([alpha], method="l-bfgs", options=dict(history_size=10))
 
 		def closure():
 			optimizer.zero_grad()
 			loss = amini_loss_alpha(K, y, alpha)
+			reg = self.lam * torch.trace(alpha.T @ K @ alpha)
+			loss = loss + reg
 			return loss
 
 		loss = optimizer.step(closure).detach()
@@ -464,7 +476,54 @@ class GaussianProcess(Estimator):
 		else:
 			return alpha, amini_loss_alpha, predict
 
-	def _studentT_fit_torch(self, K_star, newK = None):
+	def _studentT_fixed_fit_torch(self, K_star, newK = None, y=None):
+		
+		n_params = 1
+  
+		def predict(K, alpha):
+			mu = K @ alpha
+			return mu 
+		
+		def studentT_loss_alpha(K, y, alpha):
+			mu = predict(K, alpha)
+			v = torch.tensor(2.0, dtype=torch.float64)
+			a = self.s
+			v_a = v * a
+			nll = torch.lgamma(0.5*v) + 0.5*torch.log(torch.pi*v_a) - torch.lgamma((v+1)*0.5) + ((v+1)*0.5)*torch.log((1 + (y-mu)**2 /v_a))
+			nll = nll.sum()
+			return nll
+
+		self.jitter = 1e-4
+		if newK is None:
+			K = self.kernel(self.x, self.x) + self.jitter * torch.eye(self.n, dtype=torch.float64)
+		else:
+			K = newK
+
+		if y is None:
+			y = self.y
+   
+		alpha = torch.zeros(size = (len(y), n_params), requires_grad=True, dtype=torch.float64)
+		optimizer = Minimizer([alpha], method="l-bfgs")
+
+		def closure():
+			optimizer.zero_grad()
+			loss = studentT_loss_alpha(K, y, alpha)
+			reg = self.lam * torch.trace(alpha.T @ K @ alpha)
+			loss = loss + reg
+			return loss
+
+		loss = optimizer.step(closure).detach()
+		print(loss.item())
+		if torch.isnan(loss):
+			print("WARNING: Loss is nan")
+
+		if K_star is not None:	
+			with torch.no_grad():
+				return predict(K_star, alpha)
+		else:
+			return alpha, studentT_loss_alpha, predict
+
+	def _2studentT_fit_torch(self, K_star, newK = None):
 		
 		n_params = 3
   
@@ -522,8 +581,7 @@ class GaussianProcess(Estimator):
 			mu, s = predict(K, alpha)
 			nll = 0.5*torch.log(2*np.pi*s) + (y-mu)**2/s**2 + 0.5*s
 			nll = nll.sum()
-			reg = self.lam * torch.trace(alpha.T @ K @ alpha)
-			return nll + reg
+			return nll
 
 		self.jitter = 1e-4
 		if newK is None:
@@ -540,6 +598,8 @@ class GaussianProcess(Estimator):
 		def closure():
 			optimizer.zero_grad()
 			loss = hetGP_loss_alpha(K, y, alpha)
+			reg = self.lam * torch.trace(alpha.T @ K @ alpha)
+			loss = loss + reg
 			return loss
 
 		loss = optimizer.step(closure).detach()
@@ -553,8 +613,48 @@ class GaussianProcess(Estimator):
 				return predict(K_star, alpha)
 		else:
 			return alpha, hetGP_loss_alpha, predict
+	
+	def _gaussian_fit_torch(self, K_star, newK = None, y=None):
+		
+		n_params = 1
+  
+		def predict(K, alpha):
+			mu = K @ alpha
+			return mu
+		
+		def squared_loss(K, y, alpha):
+			mu = predict(K, alpha)
+			nll = 0.5*torch.log(torch.tensor(2*torch.pi*self.s)) + (y-mu)**2/self.s**2 + 0.5*self.s
+			nll = nll.sum()
+			return nll
 
+		self.jitter = 1e-4
+		if newK is None:
+			K = self.kernel(self.x, self.x) + self.jitter * torch.eye(self.n, dtype=torch.float64)
+		else:
+			K = newK
 
+		if y is None:
+			y = self.y	
+   
+		if not(newK is None):
+			K = K + self.jitter * torch.eye(len(y), dtype=torch.float64)
+      
+		try:
+			L = torch.linalg.cholesky(K)
+		except Exception as e:
+			print(K)
+			raise e
+
+		alpha = torch.cholesky_solve(y, L)
+		
+		if K_star is not None:	
+			with torch.no_grad():
+				return predict(K_star, alpha)
+		else:
+			return alpha, squared_loss, predict
+  
+  
 	def mean_std(self, xtest, full=False, reuse=False):
 		if xtest.size()[0]<self.max_size:
 			return self.mean_std_sub(xtest,full=full, reuse=reuse)
@@ -678,6 +778,10 @@ class GaussianProcess(Estimator):
 			ymean, _, _, _ = self._amini_fit_torch(K_star)
 		elif self.loss == "hetGP":
 			ymean, _ = self._hetGP_fit_torch(K_star)
+		elif self.loss == "gaussian":
+			ymean = self._gaussian_fit_torch(K_star)
+		elif self.loss == "studentT_fixed":
+			ymean = self._studentT_fixed_fit_torch(K_star)
 		# elif self.loss == "studentT_scipy":
 		# 	ymean = self._studentT_fit_scipy(K_star)[:,0]
 		else:
@@ -764,12 +868,13 @@ class GaussianProcess(Estimator):
 
 	def log_marginal(self, kernel, X, weight):
 
-		if self.loss == "squared":
+		if self.loss in ["squared"]:
 			return self._log_marginal_squared(kernel, X, weight)
 		elif self.loss == "unif_new":
 			return self._log_marginal_unif(kernel, X, weight)
 		else:
-			return self._log_marginal_map(kernel, X, weight)
+			# return self._log_marginal_map(kernel, X, weight)
+			return self._crossval_loss(kernel, X, weight)
 
 	def _log_marginal_unif(self,kernel,X,weight):
 		if not self.prepared_log_marginal:
@@ -905,6 +1010,16 @@ class GaussianProcess(Estimator):
 			H = torch.autograd.functional.hessian(nloglik, solution)
 			# H = hessian(loglikelihood)(solution)
    
+		elif self.loss == "studentT_fixed":
+			alpha, loss_fn, predict = self._studentT_fixed_fit_torch(None, newK=K_tch.detach())
+			solution = alpha
+			self.warm_start_solution = solution
+
+			nloglik = lambda alpha: loss_fn(K_tch, self.y, alpha)
+   
+			H_full = torch.autograd.functional.hessian(nloglik, solution)
+			H = H_full[:,0,:,0]
+
 		elif self.loss == "studentT":
 			alpha, loss_fn, predict = self._studentT_fit_torch(None, newK=K_tch.detach())
 			solution = alpha
@@ -1018,6 +1133,93 @@ class GaussianProcess(Estimator):
 		logprob = -0.5* nloglik(solution) + logdet
 		logprob = -logprob
 		return logprob
+
+	def _crossval_loss(self, kernel, X, weight, num_folds=10, return_components=False):
+		"""
+		Calculate the 10-fold Cross-Validation Loss using the given kernel and data.
+		
+		Parameters:
+		-----------
+		kernel : callable
+			The kernel function used to compute the covariance matrix.
+		X : dict
+			Hyperparameters for the kernel function.
+		weight : float
+			Scaling factor for the loss term.
+		num_folds : int, default=10
+			Number of folds for cross-validation (default is 10).
+		
+		Returns:
+		--------
+		cv_loss : torch.Tensor
+			The computed cross-validation loss.
+		"""
+		# Initialize
+		func = kernel.get_kernel()
+		self.jitter = 10e-4
+		cv_array = torch.zeros(size=(num_folds,))
+
+		# Create folds
+		kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
+
+		# Perform Cross-Validation
+		for idx, (train_idx, test_idx) in enumerate(kf.split(self.x)):
+			# Split data
+			X_train, X_test = self.x[train_idx], self.x[test_idx]
+			y_train, y_test = self.y[train_idx], self.y[test_idx]
+			
+			# Compute kernel matrix for the training set
+			K_tch_train = func(X_train, X_train, **X) + torch.eye(len(train_idx), dtype=torch.float64) * self.jitter
+			K_tch_test = func(X_train, X_test, **X)
+			
+			# Solve for alpha using the training set
+			if self.loss == "huber_torch":
+				alpha = self._huber_fit_torch(K_star=None, newK = K_tch_train, y=y_train)
+				mean_pred = K_tch_test @ alpha
+				test_loss = torch.nn.functional.huber_loss(
+					mean_pred / self.s, y_test / self.s, reduction='sum', delta=self.huber_delta
+				)
+			elif self.loss == "huber":
+				alpha = self._huber_fit(K_star=None, newK = K_tch_train, y=y_train)
+				mean_pred = K_tch_test @ alpha
+				test_loss = torch.nn.functional.huber_loss(
+					mean_pred / self.s, y_test / self.s, reduction='sum', delta=self.huber_delta
+				)
+			elif self.loss == "amini":
+				alpha, loss_fn, predict_fn = self._amini_fit_torch(K_star=None, newK = K_tch_train.detach(), y=y_train)
+				test_loss = loss_fn(K_tch_test, y_test, alpha)	
+			elif self.loss == "studentT_fixed":
+				alpha, loss_fn, predict_fn = self._studentT_fixed_fit_torch(K_star=None, newK = K_tch_train.detach(), y=y_train)
+				test_loss = loss_fn(K_tch_test, y_test, alpha)	
+			elif self.loss == "gaussian":
+				alpha, loss_fn, predict_fn = self._gaussian_fit_torch(K_star=None, newK = K_tch_train.detach(), y=y_train)
+				test_loss = loss_fn(K_tch_test, y_test, alpha)
+			else:
+				raise NotImplementedError("Loss function not supported yet.")
+			
+			# Compute the mean prediction for the test set
+			
+			# Accumulate the cross-validation loss
+			cv_array[idx] = test_loss
+		
+		# Average loss over folds
+		cv_mean_loss = cv_array.sum() / num_folds
+
+		alpha = 10.0
+		# Compute smooth weights
+		w = 1 / (1 + torch.exp(alpha * (cv_array - torch.quantile(cv_array, 0.5))))
+		# Normalize the weights
+		w = w/torch.sum(w, dim=-1, keepdim=True)
+		# Compute weighted CV loss
+		cv_loss = torch.sum(w * cv_array) / num_folds
+
+  
+		if return_components:
+			return { "cv_cvar_loss": cv_loss, "cv_loss": cv_mean_loss, "cv_std": cv_array.std(),
+           				**{str(i): cv_array[i] for i in range(num_folds)} }
+		
+		# Return weighted CV loss for optimization
+		return weight * cv_loss
 
 
 	def _log_marginal_squared(self, kernel, X, weight):

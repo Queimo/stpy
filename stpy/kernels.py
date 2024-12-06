@@ -371,6 +371,8 @@ class KernelFunction:
 		"""
 		if 'gamma' in kwargs.keys():
 			gamma = kwargs['gamma']
+			if abs(gamma) < 1e-6:
+				gamma = gamma + 1e-6
 		else:
 			gamma = self.gamma
 
