@@ -11,3 +11,4 @@ sensepy/__pycache__
 *.html
 .vscode/*
 .vscode/launch.json
+wandb/

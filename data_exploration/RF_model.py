@@ -30,7 +30,7 @@ if __name__ == "__main__":
     # Define RandomForestRegressor
     rf_model = RandomForestRegressor(
         n_estimators=100,  # Number of trees
-        max_depth=None,    # Allow trees to grow fully
+        max_depth=3,    # Allow trees to grow fully
         random_state=42,   # For reproducibility
         n_jobs=-1          # Use all available cores
     )
@@ -53,18 +53,34 @@ if __name__ == "__main__":
     print(f"Training MSE: {train_mse:.4f}")
     print(f"Validation MSE: {val_mse:.4f}")
     
-    # Feature Importance
-    feature_importances = rf_model.feature_importances_
-    top_idx = np.argsort(feature_importances)[::-1][:20]  # Top 20 features
+    import time
+    import pandas as pd
+    import matplotlib.pyplot as plt
 
-    # Print and plot top 20 features
-    print("Top feature importances:")
-    for idx in top_idx:
-        print(f"Feature {idx}: Importance {feature_importances[idx]:.8f}")
-        plt.bar(idx, feature_importances[idx], color="red")
-    
-    # Finalize plot
-    plt.title("Top Feature Importances")
-    plt.xlabel("Feature Index")
-    plt.ylabel("Importance")
+    # Compute feature importances and standard deviation
+    start_time = time.time()
+    importances = rf_model.feature_importances_
+    std = np.std([tree.feature_importances_ for tree in rf_model.estimators_], axis=0)
+    elapsed_time = time.time() - start_time
+
+    print(f"Elapsed time to compute the importances: {elapsed_time:.3f} seconds")
+
+    # Map importances to feature names (assuming feature_names is defined)
+    feature_names = [f"Feature {i}" for i in range(X.shape[1])]
+    forest_importances = pd.Series(importances, index=feature_names)
+
+    # Get the top 20 features
+    top_20_idx = forest_importances.nlargest(20).index
+
+    # Plot feature importances
+    fig, ax = plt.subplots(figsize=(10, 6))  # Optional: Adjust the figure size
+    forest_importances.loc[top_20_idx].plot.bar(
+        yerr=std[[int(idx.split()[-1]) for idx in top_20_idx]], 
+        ax=ax
+    )
+    ax.set_title("Top 20 Feature Importances using MDI")
+    ax.set_ylabel("Mean Decrease in Impurity")
+    ax.set_xlabel("Feature")
+    fig.tight_layout()
+
     plt.show()
