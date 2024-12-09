@@ -1,14 +1,25 @@
-from transformers import AutoTokenizer, EsmModel
+from transformers import AutoTokenizer, EsmModel, pipeline
 import torch
+import pandas as pd
+import tqdm
 
-tokenizer = AutoTokenizer.from_pretrained("facebook/esm2_t6_8M_UR50D")
-model = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
+# Load the model and tokenizer
+model_path = "facebook/esm2_t33_650M_UR50D"
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = EsmModel.from_pretrained(model_path)
 
-inputs = tokenizer("Hello, my dog is cute", return_tensors="pt")
-outputs = model(**inputs)
+# Create a pipeline
+esm_pipeline = pipeline("feature-extraction", model=model, tokenizer=tokenizer, device=0 if torch.cuda.is_available() else -1)
 
-last_hidden_states = outputs.last_hidden_state
+# Read the protein_data DataFrame from a CSV file
+df = pd.read_csv("./data_exploration/data/ProtSpatial/protein_data raw.csv", index_col=0)
+df["Plate"] = df["Plate"].str.replace("Plate_", "").astype(int)
 
-print(outputs)
-print(last_hidden_states)
-print(last_hidden_states.shape)
+import pickle
+# Process each sequence using the pipeline
+i = 0
+out = esm_pipeline(df["variant"].tolist()[:20])
+
+# Save the output to a pickle file
+with open("./data_exploration/data/ProtSpatial/esm_features.pkl", "wb") as f:
+    pickle.dump(out, f)
