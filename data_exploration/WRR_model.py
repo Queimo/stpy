@@ -29,16 +29,21 @@ def load_dataset(path, prefilter=True):
 # Main block
 if __name__ == "__main__":
     # Load data
-    path = r".\data_exploration\data_set_dict.pkl"
+    path = r".\data_exploration\data\ArM\data_set_dict.pkl"
     X, y, groups, od = load_dataset(path, prefilter=True)
 
-    splitter = GroupShuffleSplit(test_size=.20, n_splits=2, random_state = 7)
+    splitter = GroupShuffleSplit(test_size=.20, n_splits=2, random_state = 0)
     train_idx, val_idx = next(splitter.split(X, y, groups))
 
     # Use the indices to split the data
     X_train, X_val = X[train_idx], X[val_idx]
     y_train, y_val = y[train_idx], y[val_idx]
     od_train, od_val = od[train_idx], od[val_idx]
+
+    #from validation set drop certain outliers which have OD < 0.018
+    X_val = X_val[od_val > 0.018]
+    y_val = y_val[od_val > 0.018]
+    od_val = od_val[od_val > 0.018]
     
     # Split data into train and validation sets
     # X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -72,7 +77,7 @@ if __name__ == "__main__":
             self.a = a
             self.b = b
 
-        def fit(self, X, y, sample_weights=None):
+        def fit(self, X, y, od=None):
             """
             Fit the Weighted Ridge Regression model.
             
@@ -85,11 +90,14 @@ if __name__ == "__main__":
             X, y = check_X_y(X, y)
 
             # Use provided sample_weights or initialize as ones
-            if sample_weights is None:
-                sample_weights = np.ones(X.shape[0])
+            if od is None:
+                od = np.ones(X.shape[0])
 
             # Compute weights using the sigmoid function
-            s_inv = 1 / (1 + np.exp(-self.a * (sample_weights - self.b)))
+            # s_inv = 1 / (1 + np.exp(-self.a * (od - self.b)))
+            
+            # discret
+            s_inv = np.where(od < self.b, 0, 1)
 
             # Construct diagonal weight matrix
             W = np.diag(s_inv)
@@ -105,7 +113,7 @@ if __name__ == "__main__":
             # Save attributes for later use
             self.X_ = X
             self.y_ = y
-            self.sample_weights_ = sample_weights
+            self.sample_weights_ = od
 
             return self
 
@@ -130,35 +138,113 @@ if __name__ == "__main__":
 
 
     # Define your regressor
-    regressor = WeightedRidgeRegressor(alpha=270.0)
-
-    # Define the parameter grid for cross-validation
-    param_grid = {
-        "a": [10.0],  # Possible values for 'a'
-        "b": np.linspace(0, 0.1, 100)  # Possible values for 'b'
-    }
-
-    # Custom scoring metric (e.g., R^2)
-    scorer = make_scorer(r2_score)
+    regressor = WeightedRidgeRegressor(alpha=80.0)
 
     # Perform GridSearchCV
-    cv = GridSearchCV(estimator=regressor, param_grid=param_grid, scoring=scorer, cv=5)
-    cv.fit(X_train, y_train, sample_weights=od_train)
+    param_grid = {
+        "alpha": [80],  # Range of alpha values
+        "a": [1000.0],  # Fixed 'a' value
+        "b": np.linspace(0.0, 0.21, 20)  # Range of 'b' values  
+    }
 
-    # Print the best parameters and R^2 score
+    scorer = make_scorer(r2_score)
+    cv = GridSearchCV(estimator=regressor, param_grid=param_grid, scoring=scorer, cv=15, return_train_score=True, n_jobs=-1)
+    cv.fit(X_train, y_train, od=od_train)
+
+    import matplotlib.pyplot as plt
+    # Plot the contour plot
+
+    from sklearn_evaluation import plot
+
+    plot.grid_search(cv.cv_results_, change='b', kind='line')
+    
+    rotate = plt.xticks(rotation=90)
+
+    # Extract results
+    # results = cv.cv_results_
+    alpha_values = param_grid["alpha"]
+    b_values = param_grid["b"]
+    # mean_cv_r2 = results["mean_test_score"]  # Cross-validation R^2 for each 'b'
+    # std_cv_r2 = results["std_test_score"]  # Standard deviation of CV R^2
+    validation_r2 = []
+
+    # Evaluate validation R^2 for each model
+    for b in b_values:
+        model = WeightedRidgeRegressor(alpha=80, a=10.0, b=b)
+        model.fit(X_train, y_train, od=od_train)
+        y_val_pred = model.predict(X_val)
+        validation_r2.append(r2_score(y_val, y_val_pred))
+    
+    # calc validation_r2 for best model
+    model = cv.best_estimator_
+    model.fit(X_train, y_train, od=od_train)
+    y_val_pred = model.predict(X_val)
+    
+    validation_r2_f = r2_score(y_val, y_val_pred)
+    
+    print(f"Validation R^2: {validation_r2_f:.4f}")
+    print(f"Best parameters: {cv.best_params_}")
+    
+
+    # Plotting Cross-Validation R^2 and Validation R^2
+    plt.figure(figsize=(12, 6))
+    
+    mean_cv_r2 = cv.cv_results_["mean_test_score"]
+    std_cv_r2 = cv.cv_results_["std_test_score"]
+
+    # # Plot CV R^2
+    plt.plot(b_values, mean_cv_r2, label="CV R^2", color="blue")
+    plt.fill_between(b_values, mean_cv_r2 - std_cv_r2, mean_cv_r2 + std_cv_r2, color="blue", alpha=0.2)
+
+    # # Plot Validation R^2
+    plt.plot(b_values, validation_r2, label="Validation R^2", color="orange")
+    
+    # # Add vertical line for best 'b' value
+    best_b = cv.best_params_["b"]
+    plt.axvline(best_b, color="red", linestyle="--", label=f"Best b: {best_b:.4f}")
+    
+    od_train_plot = od_train[od_train < 0.2]
+    zero_axis = np.zeros(len(od_train_plot))
+    plt.scatter(od_train_plot, zero_axis, color="black", label="OD < 0.2")
+    
+
+    # Add labels, legend, and grid
+    plt.xlabel("Parameter b")
+    plt.ylabel("R^2 Score")
+    plt.title("R^2 Scores for Weighted Ridge Regression over cutoff Parameter b: (OD - b)")
+    plt.legend()
+    plt.grid(True)
+    # Show the plot
+    plt.show()
+    
+    #validation parity plot
+    plt.figure(figsize=(6, 6))
+    plt.scatter(y_val, y_val_pred, alpha=0.5)
+    plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+    plt.xlabel("True y")
+    plt.ylabel("Predicted y")
+    plt.title("Validation Parity Plot")
+    plt.grid(True)
+    plt.show()
+
+    #train parity plot
+    plt.figure(figsize=(6, 6))
+    plt.scatter(y_train, model.predict(X_train), alpha=0.5)
+    plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+    plt.xlabel("True y")
+    plt.ylabel("Predicted y")
+    plt.title("Train Parity Plot")
+    plt.grid(True)
+    plt.show()
+    
+    # Print the best parameters and cross-validation R^2
     print(f"Best parameters: {cv.best_params_}")
     print(f"Best cross-validation R^2: {cv.best_score_:.4f}")
-
-    # Make predictions using the best model
-    best_model = cv.best_estimator_
-    y_val_pred = best_model.predict(X_val)
-    print(f"Validation R^2: {r2_score(y_val, y_val_pred):.4f}")
-
-
+    # print(f"Validation R^2: {validation_r2[np.argmax(mean_cv_r2)]:.4f}")
     import matplotlib.pyplot as plt
     fig = plt.figure()
     
-    beta = best_model.coef_
+    beta = cv.best_estimator_.coef_
     
     topk = 20
     # Print top 20 coefficients
