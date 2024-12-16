@@ -38,7 +38,8 @@ batch_size = 8
 from transformers import AutoModelForSequenceClassification, TrainingArguments, Trainer
 
 num_labels = 1
-model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels, problem_type="regression").to(device)
+# model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=num_labels, problem_type="regression").to(device)
+model = EsmModel.from_pretrained(model_path).to(device)
 # 10. Model Fine-Tuning Placeholder
 # You can now use the prepared train_loader and val_loader to train your model
 
@@ -81,6 +82,8 @@ if os.path.exists(csv_path):
 # Open the file in append mode if it exists, otherwise write mode
 mode = "a" if os.path.exists(csv_path) else "w"
 
+print(df.nunique())
+
 with open(csv_path, mode, newline="") as file:
     writer = csv.writer(file)
     if mode == "w":
@@ -93,10 +96,9 @@ with open(csv_path, mode, newline="") as file:
 
         # Tokenize the variant
         batch = tokenizer(variant, padding="max_length", truncation=True, max_length=512, return_tensors="pt")
-
+        batch = {k: v.to(device) for k, v in batch.items()}
         # Perform inference
         with torch.no_grad():
-            hss = model(**batch, output_hidden_states=True).hidden_states
-            for hs in hss:
-                embedding = list(torch.mean(hs, dim=1).squeeze().cpu().numpy())
-                writer.writerow([variant, str(embedding)])  # Write the new row
+            hs = model(**batch, output_hidden_states=True).last_hidden_state
+            embedding = list(torch.mean(hs, dim=1).squeeze().cpu().numpy())
+            writer.writerow([variant, str(embedding)])  # Write the new row
