@@ -64,26 +64,39 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, c
 
 emb_list = []
 
-
-# open csv file
 import csv
+import os
 
-with open(f"./data_exploration/data/ProtSpatial/{model_name}_embeddings.csv", "w", newline="") as file:
+# Path to the CSV file
+csv_path = f"./data_exploration/data/ProtSpatial/{model_name}_embeddings.csv"
+
+# Check if the file already exists and read processed variants
+processed_variants = set()
+if os.path.exists(csv_path):
+    with open(csv_path, "r", newline="") as file:
+        reader = csv.reader(file)
+        next(reader)  # Skip the header
+        processed_variants = {row[0] for row in reader}  # Collect processed variants
+
+# Open the file in append mode if it exists, otherwise write mode
+mode = "a" if os.path.exists(csv_path) else "w"
+
+with open(csv_path, mode, newline="") as file:
     writer = csv.writer(file)
-    writer.writerow(["variant", "embedding"])
-    # for batch in train_loader:
+    if mode == "w":
+        writer.writerow(["variant", "embedding"])  # Write header if creating a new file
 
-
+    # Process the unique variants
     for variant in df["variant"].unique():
+        if variant in processed_variants:
+            continue  # Skip already processed variants
+
+        # Tokenize the variant
         batch = tokenizer(variant, padding="max_length", truncation=True, max_length=512, return_tensors="pt")
-        # Move inputs to the appropriate device
 
         # Perform inference
         with torch.no_grad():
             hss = model(**batch, output_hidden_states=True).hidden_states
             for hs in hss:
-                # emb_dict[variant] = str(list(torch.mean(hs, dim=1).squeeze().cpu().numpy()))
-                writer.writerow([variant, str(list(torch.mean(hs, dim=1).squeeze().cpu().numpy()))])      
-                     
-
-
+                embedding = list(torch.mean(hs, dim=1).squeeze().cpu().numpy())
+                writer.writerow([variant, str(embedding)])  # Write the new row
