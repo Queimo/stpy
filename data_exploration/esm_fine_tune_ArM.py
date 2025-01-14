@@ -24,7 +24,7 @@ def load_dataset(path, prefilter=True):
     else:
         pass
     
-    y = df["norm_TSNAK"].values
+    y = np.log10(df["norm_TSNAK"].values)
     variants = df["seq"].values
     sasa_colums = ['s111', 's112', 's118', 's119', 's121', 'sasa_sum']
     X_sasa = df[sasa_colums].values
@@ -73,7 +73,7 @@ model = AutoModelForSequenceClassification.from_pretrained(model_path, num_label
 # You can now use the prepared train_loader and val_loader to train your model
 
 #freeze base model
-for param in model.base_model.parameters():
+for param in model.parameters():
     param.requires_grad = False
 
 # print number of trainable parameters with transformers library
@@ -87,20 +87,36 @@ from transformers import DataCollatorWithPadding
 # Model, datasets, and tokenizer are assumed to be pre-defined
 data_collator = DataCollatorWithPadding(tokenizer)
 
+class MyModel(torch.nn.Module):
+    def __init__(self, base_model):
+        super().__init__()
+        self.base_model = base_model
+        embedding_dim = base_model.config.hidden_size
+        self.linear = torch.nn.Sequential(
+            torch.nn.Linear(embedding_dim, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 1),
+        )
+        
+    def forward(self, **batch):
+        b = {k: v for k, v in batch.items() if k != "labels"}
+        h = self.base_model(**b)
+        y = self.linear(torch.sum(h[0], dim=1)).squeeze()
+        return y
+        
+
 # Define the LightningModule
 class ESMRegressionModule(pl.LightningModule):
-    def __init__(self, model, learning_rate=1e-1, weight_decay=0.01):
+    def __init__(self, model, learning_rate=1e-3, weight_decay=0.01):
         super().__init__()
-        self.model = model.base_model
+        self.model = model
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
-        self.linear = torch.nn.Linear(320, 1)
+            
         self.loss = torch.nn.MSELoss()
 
     def forward(self, **batch):
-        b = {k: v for k, v in batch.items() if k != "labels"}
-        h = self.model(**b)
-        y = self.linear(torch.sum(h[0], dim=1)).squeeze()
+        y = self.model(**batch)
         return y
 
     def training_step(self, batch, batch_idx):
@@ -113,6 +129,7 @@ class ESMRegressionModule(pl.LightningModule):
         outputs = self(**batch)
         loss = self.loss(outputs, batch["labels"])
         self.log("val_loss", loss, prog_bar=True, logger=True)
+        self.log("val_r2", r2_score(batch["labels"].cpu().numpy(), outputs.cpu().numpy()), prog_bar=True, logger=True)
         return loss
 
     def configure_optimizers(self):
@@ -122,11 +139,12 @@ class ESMRegressionModule(pl.LightningModule):
 
 # Prepare data loaders
 batch_size = 32
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=data_collator)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=data_collator, num_workers=4)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator)
 
+mymodel = MyModel(model.base_model).to(device)
 # Instantiate the LightningModule
-model_module = ESMRegressionModule(model)
+model_module = ESMRegressionModule(mymodel)
 from lightning.pytorch.loggers import WandbLogger
 
 wandb_logger = WandbLogger(project="esm-regression")
@@ -170,7 +188,7 @@ def scores(model_module, val_dataloader):
 
         # Perform inference
         with torch.no_grad():
-            outputs = model_module.model(**batch)
+            outputs = model_module.forward(**batch)
 
         # Collect predictions and true labels
         y_pred.extend(outputs.squeeze().cpu().numpy())
